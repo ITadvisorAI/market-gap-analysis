@@ -4,3 +4,4 @@ python-docx
 python-pptx
 matplotlib
 openpyxl
+gunicorn==21.2.0
