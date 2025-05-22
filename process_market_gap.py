@@ -1,5 +1,6 @@
 
 import os
+import json
 import traceback
 import requests
 from docx import Document
@@ -9,17 +10,18 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# === Google Drive Setup ===
+# === Google Drive Setup via ENV ===
 drive_service = None
 try:
-    SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
     SCOPES = ["https://www.googleapis.com/auth/drive"]
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=SCOPES
+    service_account_info = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not service_account_info:
+        raise ValueError("Missing GOOGLE_SERVICE_ACCOUNT_JSON environment variable")
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(service_account_info), scopes=SCOPES
     )
     drive_service = build("drive", "v3", credentials=creds)
-    print("✅ Google Drive client initialized.")
+    print("✅ Google Drive client initialized from ENV")
 except Exception as e:
     print(f"❌ Google Drive setup failed: {e}")
     traceback.print_exc()
