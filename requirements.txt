@@ -5,3 +5,10 @@ python-pptx
 matplotlib
 openpyxl
 gunicorn==21.2.0
+google-auth==2.40.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.117.0
+google-api-core==2.24.0
+googleapis-common-protos==1.62.0
+gunicorn==21.2.0
