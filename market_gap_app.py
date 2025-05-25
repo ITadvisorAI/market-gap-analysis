@@ -25,6 +25,7 @@ def start_market_gap():
         files = data.get("files", [])
         webhook = data.get("next_action_webhook")
 
+        logging.warning("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
         if not all([session_id, email, webhook, files]):
             logging.error("❌ Missing required fields")
             return jsonify({"error": "Missing required fields"}), 400
