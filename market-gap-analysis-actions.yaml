@@ -2,6 +2,10 @@ openapi: 3.1.0
 info:
   title: Market GAP Analysis API
   version: 1.0.0
+
+servers:
+  - url: https://market-gap-analysis-api.onrender.com
+
 paths:
   /start_market_gap:
     post:
