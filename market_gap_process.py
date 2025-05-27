@@ -55,12 +55,19 @@ def process_market_gap(session_id, email, files, folder_path):
         downloaded_files = []
 
         for f in files:
-            path = os.path.join(folder_path, f["file_name"])
-            r = requests.get(f["file_url"], timeout=10)
-            with open(path, "wb") as fp:
-                fp.write(r.content)
-            f["local_path"] = path
-            downloaded_files.append(f)
+            if not f.get("file_url"):
+                print(f"⚠️ Skipping file '{f.get('file_name')}' due to missing file_url.")
+                continue
+            try:
+                path = os.path.join(folder_path, f["file_name"])
+                r = requests.get(f["file_url"], timeout=10)
+                with open(path, "wb") as fp:
+                    fp.write(r.content)
+                f["local_path"] = path
+                downloaded_files.append(f)
+            except Exception as e:
+                print(f"❌ Failed to download {f.get('file_name')}: {e}")
+                continue
 
         # === Parse Excel files (HW + SW) ===
         hw_insights, sw_insights = {}, {}
