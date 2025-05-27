@@ -2,9 +2,11 @@ import os
 import json
 import traceback
 import requests
+import matplotlib.pyplot as plt
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches
+from openpyxl import load_workbook
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -23,7 +25,6 @@ except Exception as e:
     print(f"❌ Failed to initialize Google Drive: {e}")
     traceback.print_exc()
 
-# === Upload utility ===
 def upload_to_drive(file_path, session_id):
     try:
         folder_id = None
@@ -48,62 +49,94 @@ def upload_to_drive(file_path, session_id):
         traceback.print_exc()
         return None
 
-# === Main processing ===
 def process_market_gap(session_id, email, files, folder_path):
     try:
         os.makedirs(folder_path, exist_ok=True)
-
-        # === STEP 1: Download input files from GPT1 ===
         downloaded_files = []
+
         for f in files:
             path = os.path.join(folder_path, f["file_name"])
             r = requests.get(f["file_url"], timeout=10)
             with open(path, "wb") as fp:
                 fp.write(r.content)
-            downloaded_files.append({
-                "file_name": f["file_name"],
-                "file_url": None,  # To be updated after re-upload
-                "file_type": f["file_type"]
-            })
+            f["local_path"] = path
+            downloaded_files.append(f)
 
-        # === STEP 2: Generate DOCX report ===
+        # === Parse Excel files (HW + SW) ===
+        hw_insights, sw_insights = {}, {}
+        for f in downloaded_files:
+            if f["file_type"] in ["hardware_gap", "software_gap"]:
+                wb = load_workbook(f["local_path"])
+                sheet = wb.active
+                obsolete = []
+                recommendations = []
+                tier_counts = {}
+                for row in sheet.iter_rows(min_row=2, values_only=True):
+                    name, model, platform, tier, status, recommendation = row[:6]
+                    if status and str(status).lower() == "obsolete":
+                        obsolete.append(platform)
+                    if recommendation:
+                        recommendations.append(f"{platform}: {recommendation}")
+                    if tier:
+                        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+                parsed = {
+                    "obsolete": list(set(obsolete)),
+                    "recommendations": list(set(recommendations)),
+                    "tier_counts": tier_counts
+                }
+                if f["file_type"] == "hardware_gap":
+                    hw_insights = parsed
+                elif f["file_type"] == "software_gap":
+                    sw_insights = parsed
+
+        # === Create DOCX Report ===
         docx_path = os.path.join(folder_path, "market_gap_analysis_report.docx")
         doc = Document()
         doc.add_heading("Market GAP Analysis Report", 0)
         doc.add_paragraph(f"Session ID: {session_id}")
-        doc.add_paragraph("\n1. Executive Summary\n<Insert summary>")
-        doc.add_paragraph("2. Scope of Analysis\n<Scope>")
-        doc.add_paragraph("3. Current Infrastructure Overview\n<Overview>")
-        doc.add_paragraph("4. Market Landscape Overview\n<Market options>")
-        doc.add_paragraph("5. Comparative Analysis\n<Tables>")
-        doc.add_paragraph("6. Recommendations\n<Upgrades>")
-        doc.add_paragraph("7. ROI\n<Cost-benefit>")
-        doc.add_paragraph("8. Risks\n<Risks>")
+        doc.add_paragraph("\n1. Executive Summary\nThis report summarizes market-based modernization insights.")
+        doc.add_paragraph("\n2. Hardware Obsolete Platforms:\n" + ", ".join(hw_insights.get("obsolete", [])) or "None")
+        doc.add_paragraph("3. Hardware Recommendations:\n" + "\n".join(hw_insights.get("recommendations", [])) or "None")
+        doc.add_paragraph("4. Hardware Tier Distribution:\n" + json.dumps(hw_insights.get("tier_counts", {})))
+
+        doc.add_paragraph("\n5. Software Obsolete Platforms:\n" + ", ".join(sw_insights.get("obsolete", [])) or "None")
+        doc.add_paragraph("6. Software Recommendations:\n" + "\n".join(sw_insights.get("recommendations", [])) or "None")
+        doc.add_paragraph("7. Software Tier Distribution:\n" + json.dumps(sw_insights.get("tier_counts", {})))
         doc.save(docx_path)
 
-        # === STEP 3: Generate PPTX report ===
+        # === Create PPTX Report ===
         pptx_path = os.path.join(folder_path, "market_gap_analysis_executive_report.pptx")
         ppt = Presentation()
-        slide1 = ppt.slides.add_slide(ppt.slide_layouts[0])
-        slide1.shapes.title.text = "Market GAP Executive Report"
-        slide1.placeholders[1].text = f"Session ID: {session_id}"
-        titles = ["Executive Summary", "Scope", "Overview", "Market Trends", "Comparative Gaps", "Recommendations"]
-        for t in titles:
-            slide = ppt.slides.add_slide(ppt.slide_layouts[1])
-            slide.shapes.title.text = t
-            slide.placeholders[1].text = f"<{t} content>"
+        slide = ppt.slides.add_slide(ppt.slide_layouts[0])
+        slide.shapes.title.text = "Market GAP Executive Report"
+        slide.placeholders[1].text = f"Session ID: {session_id}"
+
+        def add_bullet_slide(title, items):
+            s = ppt.slides.add_slide(ppt.slide_layouts[1])
+            s.shapes.title.text = title
+            body = s.placeholders[1]
+            body.text = ""
+            for item in items:
+                p = body.text_frame.add_paragraph()
+                p.text = item
+
+        add_bullet_slide("Obsolete Hardware", hw_insights.get("obsolete", []))
+        add_bullet_slide("Hardware Recommendations", hw_insights.get("recommendations", []))
+        add_bullet_slide("Hardware Tier Summary", [f"{k}: {v}" for k, v in hw_insights.get("tier_counts", {}).items()])
+
+        add_bullet_slide("Obsolete Software", sw_insights.get("obsolete", []))
+        add_bullet_slide("Software Recommendations", sw_insights.get("recommendations", []))
+        add_bullet_slide("Software Tier Summary", [f"{k}: {v}" for k, v in sw_insights.get("tier_counts", {}).items()])
+
         ppt.save(pptx_path)
 
-        # === STEP 4: Upload all files to Drive ===
+        # Upload outputs
         docx_url = upload_to_drive(docx_path, session_id)
         pptx_url = upload_to_drive(pptx_path, session_id)
 
-        # Update downloaded file URLs after upload
         for f in downloaded_files:
-            local_path = os.path.join(folder_path, f["file_name"])
-            f["file_url"] = upload_to_drive(local_path, session_id)
+            f["file_url"] = upload_to_drive(f["local_path"], session_id)
 
-        # Append generated files
         downloaded_files.extend([
             {
                 "file_name": os.path.basename(docx_path),
@@ -117,7 +150,7 @@ def process_market_gap(session_id, email, files, folder_path):
             }
         ])
 
-        # === STEP 5: Send to IT Strategy ===
+        # Send to next GPT
         IT_STRATEGY_API = "https://it-strategy-api.onrender.com/start_it_strategy"
         payload = {
             "session_id": session_id,
