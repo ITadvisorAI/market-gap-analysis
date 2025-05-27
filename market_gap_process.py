@@ -49,19 +49,24 @@ def upload_to_drive(file_path, session_id):
         return None
 
 # === Main processing ===
-def process_market_gap(session_id, email, files, webhook, folder_path):
+def process_market_gap(session_id, email, files, folder_path):
     try:
         os.makedirs(folder_path, exist_ok=True)
 
-        downloaded = {}
+        # === STEP 1: Download input files from GPT1 ===
+        downloaded_files = []
         for f in files:
             path = os.path.join(folder_path, f["file_name"])
             r = requests.get(f["file_url"], timeout=10)
             with open(path, "wb") as fp:
                 fp.write(r.content)
-            downloaded[f["file_type"]] = path
+            downloaded_files.append({
+                "file_name": f["file_name"],
+                "file_url": None,  # To be updated after re-upload
+                "file_type": f["file_type"]
+            })
 
-        # === DOCX Report ===
+        # === STEP 2: Generate DOCX report ===
         docx_path = os.path.join(folder_path, "market_gap_analysis_report.docx")
         doc = Document()
         doc.add_heading("Market GAP Analysis Report", 0)
@@ -76,7 +81,7 @@ def process_market_gap(session_id, email, files, webhook, folder_path):
         doc.add_paragraph("8. Risks\n<Risks>")
         doc.save(docx_path)
 
-        # === PPTX Report ===
+        # === STEP 3: Generate PPTX report ===
         pptx_path = os.path.join(folder_path, "market_gap_analysis_executive_report.pptx")
         ppt = Presentation()
         slide1 = ppt.slides.add_slide(ppt.slide_layouts[0])
@@ -89,19 +94,39 @@ def process_market_gap(session_id, email, files, webhook, folder_path):
             slide.placeholders[1].text = f"<{t} content>"
         ppt.save(pptx_path)
 
+        # === STEP 4: Upload all files to Drive ===
         docx_url = upload_to_drive(docx_path, session_id)
         pptx_url = upload_to_drive(pptx_path, session_id)
 
+        # Update downloaded file URLs after upload
+        for f in downloaded_files:
+            local_path = os.path.join(folder_path, f["file_name"])
+            f["file_url"] = upload_to_drive(local_path, session_id)
+
+        # Append generated files
+        downloaded_files.extend([
+            {
+                "file_name": os.path.basename(docx_path),
+                "file_url": docx_url,
+                "file_type": "docx_market_report"
+            },
+            {
+                "file_name": os.path.basename(pptx_path),
+                "file_url": pptx_url,
+                "file_type": "pptx_market_summary"
+            }
+        ])
+
+        # === STEP 5: Send to IT Strategy ===
+        IT_STRATEGY_API = "https://it-strategy-api.onrender.com/start_it_strategy"
         payload = {
             "session_id": session_id,
+            "email": email,
             "gpt_module": "gap_market",
-            "file_1_name": "market_gap_analysis_report.docx",
-            "file_1_url": docx_url,
-            "file_2_name": "market_gap_analysis_executive_report.pptx",
-            "file_2_url": pptx_url,
+            "files": downloaded_files,
             "status": "complete"
         }
-        requests.post(webhook, json=payload)
+        requests.post(IT_STRATEGY_API, json=payload)
 
     except Exception as e:
         print(f"🔥 GAP analysis failed: {e}")
