@@ -2,7 +2,6 @@ import os
 import json
 import logging
 import threading
-import traceback
 from flask import Flask, request, jsonify
 from market_gap_process import process_market_gap
 
@@ -23,22 +22,23 @@ def start_market_gap():
         session_id = data.get("session_id")
         email = data.get("email")
         files = data.get("files", [])
-        webhook = data.get("next_action_webhook")
 
         logging.warning("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
-        if not all([session_id, email, webhook, files]):
+        if not all([session_id, email, files]):
             logging.error("❌ Missing required fields")
             return jsonify({"error": "Missing required fields"}), 400
 
+        # Create session folder
         folder = session_id if session_id.startswith("Temp_") else f"Temp_{session_id}"
         folder_path = os.path.join(BASE_DIR, folder)
         os.makedirs(folder_path, exist_ok=True)
 
+        # Start background processing
         def runner():
             try:
-                process_market_gap(session_id, email, files, webhook, folder_path)
+                process_market_gap(session_id, email, files, folder_path)
             except Exception as e:
-                logging.exception("🔥 Error inside market GAP processing thread")
+                logging.exception("🔥 Error in market GAP processing thread")
 
         threading.Thread(target=runner, daemon=True).start()
         logging.info(f"🚀 Started Market GAP processing for {session_id}")
