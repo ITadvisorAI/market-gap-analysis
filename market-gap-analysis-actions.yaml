@@ -1,97 +1,47 @@
 openapi: 3.1.0
 info:
-  title: GPT Orchestration API – Market GAP Analysis Module
-  version: 1.1.0
-  description: >
-    API to receive infrastructure assessment output from GPT2,
-    perform market-based GAP analysis, and return modernized
-    replacement recommendations in DOCX and PPTX formats.
-
-servers:
-  - url: https://market-gap-analysis.onrender.com
-
+  title: Market GAP Analysis API
+  version: 1.0.0
 paths:
   /start_market_gap:
     post:
-      operationId: startMarketGap
       summary: Start Market GAP Analysis
-      description: >
-        Receives session metadata and files from the IT assessment module (GPT2),
-        downloads required inputs, and runs a market GAP analysis.
-        Generates a Word report and PowerPoint summary with modernization insights.
-
+      operationId: startMarketGap
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              properties:
-                session_id:
-                  type: string
-                  description: Unique session ID (e.g., Temp_20250522_user@example.com)
-                email:
-                  type: string
-                  format: email
-                file_1_name:
-                  type: string
-                file_1_url:
-                  type: string
-                  format: uri
-                file_2_name:
-                  type: string
-                file_2_url:
-                  type: string
-                  format: uri
-                file_3_name:
-                  type: string
-                file_3_url:
-                  type: string
-                  format: uri
-                file_4_name:
-                  type: string
-                file_4_url:
-                  type: string
-                  format: uri
               required:
                 - session_id
                 - email
-                - file_1_name
-                - file_1_url
-
+                - files
+              properties:
+                session_id:
+                  type: string
+                  description: Unique session identifier (e.g., Temp_YYYYMMDD_email)
+                email:
+                  type: string
+                  description: User email address
+                files:
+                  type: array
+                  description: List of input files and their metadata
+                  items:
+                    type: object
+                    required:
+                      - file_name
+                      - file_url
+                      - file_type
+                    properties:
+                      file_name:
+                        type: string
+                      file_url:
+                        type: string
+                      file_type:
+                        type: string
       responses:
         "200":
-          description: Market GAP Analysis started
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Market GAP analysis started
-
-        "400":
-          description: Missing or invalid request fields
-
+          description: Market GAP analysis started successfully
         "500":
           description: Internal server error
-
-  /files/{filename}:
-    get:
-      operationId: getGeneratedFile
-      summary: Serve generated DOCX or PPTX output
-      description: >
-        Returns a generated document or presentation for download.
-        Files are stored in /files/{session_id}/{filename} format.
-      parameters:
-        - name: filename
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: File successfully retrieved
-        "404":
-          description: File not found
