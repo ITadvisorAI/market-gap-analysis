@@ -1,11 +1,9 @@
 openapi: 3.1.0
 info:
   title: Market GAP Analysis API
-  version: 1.0.0
-
+  version: 1.0.1
 servers:
   - url: https://market-gap-analysis-api.onrender.com
-
 paths:
   /start_market_gap:
     post:
@@ -20,32 +18,50 @@ paths:
               required:
                 - session_id
                 - email
-                - files
               properties:
                 session_id:
                   type: string
-                  description: Unique session identifier (e.g., Temp_YYYYMMDD_email)
+                  description: Unique identifier for this analysis session, e.g. Temp_20250615_xyz
                 email:
                   type: string
-                  description: User email address
-                files:
-                  type: array
-                  description: List of input files and their metadata
-                  items:
-                    type: object
-                    required:
-                      - file_name
-                      - file_url
-                      - file_type
-                    properties:
-                      file_name:
-                        type: string
-                      file_url:
-                        type: string
-                      file_type:
-                        type: string
+                  format: email
+                  description: User email address for notification or report metadata
+                folder_id:
+                  type: string
+                  description: (Optional) Google Drive folder ID to reuse for uploads
+              additionalProperties:
+                type: string
+                description: |
+                  Dynamic file URLs produced by previous modules.
+                  Should be named file_{n}_drive_url (e.g. file_1_drive_url, file_2_drive_url, … up to file_20_drive_url).
       responses:
         "200":
           description: Market GAP analysis started successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Market GAP analysis started with 4 files"
+        "400":
+          description: Missing required fields or no file URLs provided
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Missing session_id or email"
         "500":
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
