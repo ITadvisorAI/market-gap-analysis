@@ -27,9 +27,9 @@ def start_market_gap():
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
         # Validate required fields
-        if not session_id or not email:
-            logging.error("❌ Missing session_id or email")
-            return jsonify({"error": "Missing session_id or email"}), 400
+        if not session_id:
+            logging.error("❌ Missing session_id")
+            return jsonify({"error": "Missing session_id"}), 400
 
         # Dynamically collect all *_drive_url entries
         files = []
