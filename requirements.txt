@@ -2,8 +2,8 @@ Flask==2.3.3
 requests==2.31.0
 python-docx
 python-pptx
-matplotlib
-openpyxl
+matplotlib>=3.0
+openpyxl>=3.0
 gunicorn==21.2.0
 google-auth==2.40.0
 google-auth-oauthlib==1.2.0
@@ -12,3 +12,4 @@ google-api-python-client==2.117.0
 google-api-core==2.24.0
 googleapis-common-protos==1.62.0
 gunicorn==21.2.0
+pandas>=1.0
