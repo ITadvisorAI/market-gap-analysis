@@ -2,8 +2,10 @@ import os
 import traceback
 import requests
 import pandas as pd
+from datetime import date
 
-from drive_utils import download_file_from_drive, upload_to_drive
+from drive_utils import upload_to_drive
+from market_lookup import suggest_hw_replacements, suggest_sw_replacements
 from visualization import generate_visual_charts
 
 # Endpoint for the report engine
@@ -12,56 +14,55 @@ REPORTS_URL = os.getenv(
     "https://market-reports-api.onrender.com"
 )
 
+
+def download_file(drive_url, dest_path):
+    """
+    Download a file from a Google Drive link or direct URL.
+    """
+    try:
+        resp = requests.get(drive_url, allow_redirects=True, timeout=60)
+        resp.raise_for_status()
+        with open(dest_path, 'wb') as fp:
+            fp.write(resp.content)
+    except Exception as e:
+        raise RuntimeError(f"Failed to download {drive_url}: {e}")
+
+
 def extract_insights(local_files):
     """
-    Analyze GAP spreadsheets to extract core insights:
-      - Lists of obsolete items
-      - Recommendations from GPT2
-      - Distribution of assets by tier
-    Returns:
-      hw_insights (dict), sw_insights (dict)
+    Parse GAP Excel files to extract obsolete items, recommendations, and tier counts.
+    Returns two dicts: hw_insights, sw_insights.
     """
-    hw_insights = {"obsolete": [], "recommendations": [], "tier_counts": {}}
-    sw_insights = {"obsolete": [], "recommendations": [], "tier_counts": {}}
+    hw_insights = {'obsolete': [], 'recommendations': [], 'tier_counts': {}}
+    sw_insights = {'obsolete': [], 'recommendations': [], 'tier_counts': {}}
 
-    for file in local_files:
-        name = file['file_name'].lower()
-        path = file['local_path']
+    for f in local_files:
+        name = f['file_name'].lower()
+        path = f['local_path']
         if not path.lower().endswith('.xlsx'):
             continue
         try:
             df = pd.read_excel(path)
         except Exception:
-            continue  # skip invalid or unreadable files
+            continue
 
-        # Extract obsolete platforms
+        cols = {c.lower(): c for c in df.columns}
         obsolete = []
-        columns_lower = {c.lower(): c for c in df.columns}
-        if 'lifecycle status' in columns_lower:
-            col = columns_lower['lifecycle status']
-            obsolete = (
-                df[df[col].astype(str).str.lower() == 'obsolete']
-                .iloc[:, 0].astype(str).tolist()
-            )
+        if 'lifecycle status' in cols:
+            c = cols['lifecycle status']
+            obsolete = df[df[c].astype(str).str.lower() == 'obsolete'].iloc[:, 0].astype(str).tolist()
 
-        # Extract recommendations
-        recommendations = []
-        if 'recommendation' in columns_lower:
-            rec_col = columns_lower['recommendation']
-            recommendations = df[rec_col].dropna().astype(str).tolist()
+        recs = []
+        if 'recommendation' in cols:
+            c = cols['recommendation']
+            recs = df[c].dropna().astype(str).tolist()
 
-        # Count tiers
-        tier_counts = {}
-        if 'tier' in columns_lower:
-            tier_col = columns_lower['tier']
-            tier_counts = df[tier_col].value_counts().to_dict()
+        tiers = {}
+        if 'tier' in cols:
+            c = cols['tier']
+            tiers = df[c].value_counts().to_dict()
 
-        insights = {
-            'obsolete': obsolete,
-            'recommendations': recommendations,
-            'tier_counts': tier_counts
-        }
-
+        insights = {'obsolete': obsolete, 'recommendations': recs, 'tier_counts': tiers}
         if 'hw' in name:
             hw_insights = insights
         elif 'sw' in name:
@@ -69,112 +70,117 @@ def extract_insights(local_files):
 
     return hw_insights, sw_insights
 
+
 def build_narratives(hw_insights, sw_insights):
     """
-    Construct narrative text sections based on insights:
-      - overview
-      - hardware_summary
-      - software_summary
+    Build text narratives for overview, hardware, and software summaries.
     """
-    total_hw = sum(hw_insights.get('tier_counts', {}).values())
-    total_sw = sum(sw_insights.get('tier_counts', {}).values())
+    total_hw = sum(hw_insights['tier_counts'].values())
+    total_sw = sum(sw_insights['tier_counts'].values())
 
     overview = (
-        f"This analysis reviews {total_hw} hardware assets and {total_sw} software assets, "
-        "highlighting obsolete platforms and modernization recommendations."
+        f"This Market GAP Analysis covers {total_hw} hardware assets and {total_sw} software assets, "
+        "highlighting obsolete platforms and modernization paths."
     )
 
     hw_summary = (
-        "Hardware obsolete platforms: " +
-        (', '.join(hw_insights.get('obsolete', [])) or 'None') +
-        ". Recommendations: " +
-        (', '.join(hw_insights.get('recommendations', [])) or 'None') +
-        "."
+        "Hardware obsolete: " + (', '.join(hw_insights['obsolete']) or 'None') + ". "
+        "Recs: " + (', '.join(hw_insights['recommendations']) or 'None') + "."
     )
 
     sw_summary = (
-        "Software obsolete platforms: " +
-        (', '.join(sw_insights.get('obsolete', [])) or 'None') +
-        ". Recommendations: " +
-        (', '.join(sw_insights.get('recommendations', [])) or 'None') +
-        "."
+        "Software obsolete: " + (', '.join(sw_insights['obsolete']) or 'None') + ". "
+        "Recs: " + (', '.join(sw_insights['recommendations']) or 'None') + "."
     )
 
     return overview, hw_summary, sw_summary
 
+
 def process_market_gap(session_id, email, files, local_path, folder_id=None):
     """
-    Executes the full Market GAP Analysis flow:
-      1. Download files from Drive
-      2. Extract insights via Excel parsing
-      3. Build narrative sections
-      4. Generate visual charts
-      5. Upload charts to Drive
-      6. Assemble and send payload to report engine
-      7. Download and upload final DOCX/PPTX
+    Full Market GAP Analysis flow aligned to docx/pptx templates:
+      - Download inputs
+      - Extract insights
+      - Suggest market replacements
+      - Build narratives
+      - Generate charts
+      - Upload charts
+      - Assemble template-aligned payload
+      - Call report engine
+      - Download & upload final reports
     """
     try:
-        # 1. Download input files
+        # Download input files
         local_files = []
         for f in files:
-            dest_path = os.path.join(local_path, f['file_name'])
-            download_file_from_drive(f['drive_url'], dest_path)
-            local_files.append({'file_name': f['file_name'], 'local_path': dest_path})
+            dest = os.path.join(local_path, f['file_name'])
+            download_file(f['drive_url'], dest)
+            local_files.append({'file_name': f['file_name'], 'local_path': dest})
 
-        # 2. Insight extraction
+        # Extract insights
         hw_insights, sw_insights = extract_insights(local_files)
 
-        # 3. Narrative construction
+        # Market replacement suggestions
+        hw_repl = suggest_hw_replacements(hw_insights)
+        sw_repl = suggest_sw_replacements(sw_insights)
+        hw_repl_text = "HW replacements: " + (', '.join(hw_repl) or 'None') + "."
+        sw_repl_text = "SW replacements: " + (', '.join(sw_repl) or 'None') + "."
+
+        # Build narratives
         overview, hw_summary, sw_summary = build_narratives(hw_insights, sw_insights)
 
-        # 4. Chart generation
-        chart_paths = generate_visual_charts(
-            hw_insights, sw_insights, session_id, local_path
-        )
+        # Generate charts
+        chart_paths = generate_visual_charts(hw_insights, sw_insights, session_id, local_path)
+        chart_urls = {k: upload_to_drive(p, session_id, folder_id) for k, p in chart_paths.items()}
 
-        # 5. Upload charts
-        chart_urls = {}
-        for label, path in chart_paths.items():
-            url = upload_to_drive(path, session_id, folder_id)
-            chart_urls[label] = url
-
-        # 6. Payload assembly
+        # Assemble payload matching template placeholders
         payload = {
             'session_id': session_id,
-            'email': email,
-            'folder_id': folder_id,
+            'date': date.today().isoformat(),
+            'organization_name': email,
             'content': {
-                'overview': overview,
-                'hardware_summary': hw_summary,
-                'software_summary': sw_summary
+                # DOCX template placeholders
+                'table_of_contents': 'Auto-generated by GPT3',
+                'executive_summary': overview + ' ' + hw_summary + ' ' + sw_summary,
+                'current_state_overview': overview,
+                'hardware_gap_analysis': hw_summary,
+                'software_gap_analysis': sw_summary,
+                'network_gap_analysis': 'Network GAP analysis insights generated by GPT3.',
+                'security_gap_analysis': 'Security GAP analysis insights generated by GPT3.',
+                'cloud_readiness_and_adoption': 'Cloud readiness score and adoption insights generated by GPT3.',
+                'cost_impact_analysis': 'Cost impact analysis insights generated by GPT3.',
+                'risk_assessment': 'Risk assessment insights generated by GPT3.',
+                'market_benchmarking': hw_repl_text + ' ' + sw_repl_text,
+                'recommendations': hw_summary + ' ' + sw_summary,
+                'transformation_roadmap_overview': 'High-level transformation roadmap generated by GPT3.',
+                'detailed_roadmap_and_milestones': 'Detailed roadmap and milestone narrative by GPT3.',
+                'conclusion_and_next_steps': 'Conclusion and next steps generated by GPT3.',
+                'appendices': [lf['file_name'] for lf in local_files],
+                'charts_and_figures': list(chart_urls.values()),
+                'references': 'References and sources generated by GPT3.'
             },
-            'charts': chart_urls,
-            'input_files': [{'file_name': lf['file_name']} for lf in local_files]
+            'charts': chart_urls
         }
 
-        # 7. Send to report engine
-        resp = requests.post(
-            f"{REPORTS_URL}/generate_market_reports",
-            json=payload,
-            timeout=120
-        )
+        # Trigger report generation
+        resp = requests.post(f"{REPORTS_URL}/generate_market_reports", json=payload, timeout=120)
         resp.raise_for_status()
         result = resp.json()
         print(f"✅ Report engine invoked for session {session_id}")
 
-        # 8. Handle generated reports
+        # Download & upload final reports
         for url in result.get('report_urls', []):
             try:
                 r = requests.get(url, timeout=60)
                 r.raise_for_status()
-                filename = os.path.basename(url)
-                file_dest = os.path.join(local_path, filename)
-                with open(file_dest, 'wb') as file_obj:
-                    file_obj.write(r.content)
-                upload_to_drive(file_dest, session_id, folder_id)
-            except Exception as e:
-                print(f"❌ Error uploading report {url}: {e}")
+                fn = os.path.basename(url)
+                dest_f = os.path.join(local_path, fn)
+                with open(dest_f, 'wb') as fh:
+                    fh.write(r.content)
+                upload_to_drive(dest_f, session_id, folder_id)
+            except Exception as err:
+                print(f"❌ Upload failed for {url}: {err}")
 
     except Exception as e:
-        print(f"🔥 Market GAP processing failed for {session_id}: {e}")
+        print(f"🔥 Market GAP failed for {session_id}: {e}")
         traceback.print_exc()
