@@ -4,6 +4,7 @@ import traceback
 import requests
 import matplotlib.pyplot as plt
 import pandas as pd
+import re
 from openpyxl import load_workbook
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -68,10 +69,32 @@ def download_files(files, local_path):
             continue
         dest = os.path.join(local_path, name)
         try:
-            r = requests.get(url, timeout=60)
-            r.raise_for_status()
+            m = re.search(r"/d/([^/]+)/", url)
+            if not m:
+                raise ValueError(f"Cannot parse file ID from URL: {url}")
+            file_id = m.group(1)
+
+            meta = drive_service.files().get(
+                fileId=file_id, fields="mimeType"
+            ).execute()
+            mime = meta["mimeType"]
+
+            if mime == "application/vnd.google-apps.presentation":
+                data = drive_service.files().export(
+                    fileId=file_id,
+                    mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                ).execute()
+            elif mime == "application/vnd.google-apps.document":
+                data = drive_service.files().export(
+                    fileId=file_id,
+                    mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ).execute()
+            else:
+                data = drive_service.files().get_media(fileId=file_id).execute()
+
             with open(dest, "wb") as fp:
-                fp.write(r.content)
+                fp.write(data)
+
             downloaded.append({"file_name": name, "local_path": dest})
         except Exception as e:
             print(f"❌ Download failed for {name}: {e}")
@@ -82,11 +105,13 @@ def extract_insights(downloaded_files):
     """
     Parses GAP Excel files to extract insights: obsolete, recommendations, tier_counts.
     """
-    hw, sw = {"obsolete": [], "recommendations": [], "tier_counts": {}}, {"obsolete": [], "recommendations": [], "tier_counts": {}}
+    hw = {"obsolete": [], "recommendations": [], "tier_counts": {}}
+    sw = {"obsolete": [], "recommendations": [], "tier_counts": {}}
     for f in downloaded_files:
         name = f["file_name"].lower()
         path = f["local_path"]
-        if not name.endswith(".xlsx"): continue
+        if not name.endswith(".xlsx"):
+            continue
         df = pd.read_excel(path)
         obsolete = df[df['Lifecycle Status'].str.lower()=='obsolete']['Device Type'].tolist() if 'Lifecycle Status' in df else []
         recs = df['Recommendation'].dropna().astype(str).tolist() if 'Recommendation' in df else []
@@ -125,7 +150,8 @@ def generate_charts(hw_insights, sw_insights, session_id, local_path):
     charts = {}
     for label, insights in [('hardware', hw_insights), ('software', sw_insights)]:
         data = insights.get('tier_counts', {})
-        if not data: continue
+        if not data:
+            continue
         plt.figure()
         plt.bar(list(data.keys()), list(data.values()))
         plt.title(f"{label.title()} Tier Distribution")
