@@ -12,7 +12,8 @@ from drive_utils import upload_to_drive, list_files_in_folder
 from visualization import generate_visual_charts
 
 # ---------------------- Configuration ----------------------
-# Local sessions directory\ nBASE_DIR = "temp_sessions"
+# Local sessions directory
+BASE_DIR = "temp_sessions"
 os.makedirs(BASE_DIR, exist_ok=True)
 
 # Market Reports API endpoint (to generate DOCX/PPTX)
@@ -113,7 +114,7 @@ def ingest_and_analyze(session_id: str, folder_id: str, next_webhook: str, email
             except Exception as e:
                 logger.warning(f"⚠️ Failed to upload chart {key}: {e}")
 
-        # 6. Build payload and trigger report generation
+        # 6. Build payload
         report_payload = {
             "session_id": session_id,
             "folder_id": folder_id,
@@ -123,9 +124,14 @@ def ingest_and_analyze(session_id: str, folder_id: str, next_webhook: str, email
             "next_action_webhook": next_webhook
         }
         logger.info(f"🚀 Sending payload to Market Reports API at {REPORT_API_URL}")
-        resp = requests.post(REPORT_API_URL, json=report_payload, timeout=60)
-        resp.raise_for_status()
-        logger.info("✅ Report API triggered successfully")
+        try:
+            resp = requests.post(REPORT_API_URL, json=report_payload, timeout=60)
+            resp.raise_for_status()
+            logger.info("✅ Report API triggered successfully")
+        except requests.HTTPError as http_err:
+            logger.error(f"🔥 Report API error {http_err.response.status_code}: {http_err.response.text}")
+        except Exception as err:
+            logger.error(f"🔥 Failed to call Report API: {err}")
 
     except Exception as e:
         logger.error(f"🔥 Market Gap analysis failed: {e}")
