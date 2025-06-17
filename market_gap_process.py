@@ -58,7 +58,7 @@ def ingest_and_analyze(session_id: str, folder_id: str, next_webhook: str, email
         os.makedirs(local_path, exist_ok=True)
 
         # 1. Download all files from Drive
-        files = list_files_in_folder(folder_id)
+        files = list_files_in_folder(session_id)
         data_frames = {}
         for f in files:
             name = f.get("name")
@@ -108,7 +108,7 @@ def ingest_and_analyze(session_id: str, folder_id: str, next_webhook: str, email
         charts = {}
         for key, img_path in charts_local.items():
             try:
-                url = upload_to_drive(img_path, session_id, folder_id)
+                url = upload_to_drive(img_path, os.path.basename(img_path), session_id)
                 charts[key] = url
                 logger.info(f"📈 Uploaded chart {key} -> {url}")
             except Exception as e:
@@ -123,6 +123,16 @@ def ingest_and_analyze(session_id: str, folder_id: str, next_webhook: str, email
             "charts": charts,
             "next_action_webhook": next_webhook
         }
+
+        # Debug: log full payload
+        logger.info("🔍 Built report_payload:\n%s", json.dumps(report_payload, indent=2))
+        # Optionally save to a debug file
+        debug_file = os.path.join(local_path, "debug_report_payload.json")
+        with open(debug_file, "w") as df:
+            json.dump(report_payload, df, indent=2)
+        logger.info(f"🔍 Debug payload written to {debug_file}")
+
+        # 7. Trigger report generation
         logger.info(f"🚀 Sending payload to Market Reports API at {REPORT_API_URL}")
         try:
             resp = requests.post(REPORT_API_URL, json=report_payload, timeout=60)
