@@ -1,175 +1,184 @@
 import os
 import json
-import logging
 import traceback
-import threading
 import requests
+import matplotlib.pyplot as plt
 import pandas as pd
-import openai
-from flask import Flask, request, jsonify
-from docxtpl import DocxTemplate
-from drive_utils import upload_to_drive, list_files_in_folder
-from visualization import generate_visual_charts
+from openpyxl import load_workbook
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# ---------------------- Configuration ----------------------
-# Local sessions directory
-BASE_DIR = "temp_sessions"
-os.makedirs(BASE_DIR, exist_ok=True)
+# === Google Drive Setup ===
+drive_service = None
+try:
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if creds_json:
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(creds_json),
+            scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        drive_service = build("drive", "v3", credentials=creds)
+except Exception as e:
+    print(f"❌ Failed to initialize Google Drive: {e}")
+    traceback.print_exc()
 
-# Market Reports API endpoint (to generate DOCX/PPTX)
-REPORT_API_URL = os.getenv("REPORT_API_URL", "http://localhost:10000/generate_market_reports")
 
-# OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Templates directory and DOCX placeholder introspection
-TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
-DOCX_TEMPLATE = os.path.join(TEMPLATES_DIR, "market_gap_analysis_report_template.docx")
-
-# Logging setup
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
-
-# Flask app
-app = Flask(__name__)
-
-# ---------------------- Helper Functions ----------------------
-def download_file(url: str, local_dir: str) -> str:
+def upload_to_drive(file_path, session_id, folder_id=None):
     """
-    Download a file from a URL into local_dir and return its local path.
-    """
-    filename = os.path.basename(url.split("?")[0])
-    dest = os.path.join(local_dir, filename)
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    with open(dest, "wb") as f:
-        f.write(resp.content)
-    return dest
-
-# ---------------------- Core Processing ----------------------
-def ingest_and_analyze(session_id: str, folder_id: str, next_webhook: str, email: str):
-    """
-    Downloads input files, extracts data, calls OpenAI for narratives,
-    generates charts, uploads assets, and triggers report API.
+    Uploads a file (including charts) to an existing Drive folder; creates folder if needed.
     """
     try:
-        logger.info(f"🔍 Starting Market Gap analysis for session {session_id}")
-        local_path = os.path.join(BASE_DIR, session_id)
-        os.makedirs(local_path, exist_ok=True)
+        if folder_id:
+            target_folder = folder_id
+        else:
+            # find or create folder by session_id name
+            q = f"name='{session_id}' and mimeType='application/vnd.google-apps.folder'"
+            res = drive_service.files().list(q=q, fields="files(id)").execute()
+            files = res.get("files", [])
+            if files:
+                target_folder = files[0]["id"]
+            else:
+                fld = drive_service.files().create(body={
+                    "name": session_id,
+                    "mimeType": "application/vnd.google-apps.folder"
+                }, fields="id").execute()
+                target_folder = fld["id"]
 
-        # 1. Download all files from Drive
-        files = list_files_in_folder(session_id)
-        data_frames = {}
-        for f in files:
-            name = f.get("name")
-            url = f.get("webContentLink") or f.get("webViewLink") or f.get("id")
-            try:
-                local_file = download_file(url, local_path)
-                if name.lower().endswith(".xlsx"):
-                    df = pd.read_excel(local_file)
-                    data_frames[name] = df
-                    logger.info(f"📊 Parsed Excel: {name} ({len(df)} rows)")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to download/parse {name}: {e}")
+        file_meta = {"name": os.path.basename(file_path), "parents": [target_folder]}
+        media = MediaFileUpload(file_path, resumable=True)
+        uploaded = drive_service.files().create(body=file_meta, media_body=media, fields="id").execute()
+        return f"https://drive.google.com/file/d/{uploaded['id']}/view"
+    except Exception as e:
+        print(f"❌ Upload failed: {e}")
+        traceback.print_exc()
+        return None
 
-        # 2. Summarize data for OpenAI
-        summary = {name: df.head(100).to_dict(orient="records") for name, df in data_frames.items()}
 
-        # 3. Extract docx placeholders
-        doc = DocxTemplate(DOCX_TEMPLATE)
-        placeholders = list(doc.get_undeclared_template_variables())
-        logger.info(f"🏷️ Found placeholders in template: {placeholders}")
+def download_files(files, local_path):
+    """
+    Downloads each file URL into local_path and returns list of local file info.
+    """
+    os.makedirs(local_path, exist_ok=True)
+    downloaded = []
+    for f in files:
+        url = f.get("file_url")
+        name = f.get("file_name")
+        if not url or not name:
+            continue
+        dest = os.path.join(local_path, name)
+        try:
+            r = requests.get(url, timeout=60)
+            r.raise_for_status()
+            with open(dest, "wb") as fp:
+                fp.write(r.content)
+            downloaded.append({"file_name": name, "local_path": dest})
+        except Exception as e:
+            print(f"❌ Download failed for {name}: {e}")
+    return downloaded
 
-        # 4. Call OpenAI to generate narratives
-        system_prompt = (
-            "You are an expert IT analyst. "
-            "Generate narrative sections for a market gap analysis report. "
-            "Structure the output as a JSON mapping each placeholder key to a paragraph of text."
-        )
-        user_prompt = (
-            f"Data summary (sample records): {json.dumps(summary)}\n"
-            f"Placeholders: {placeholders}"
-        )
-        logger.info("🤖 Calling OpenAI for narrative generation...")
-        completion = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.2,
-            max_tokens=1500
-        )
-        content = json.loads(completion.choices[0].message.content)
-        logger.info("✅ Received narratives from OpenAI")
 
-        # 5. Generate charts using visualization module
-        charts_local = generate_visual_charts(data_frames, local_path)
-        charts = {}
-        for key, img_path in charts_local.items():
-            try:
-                url = upload_to_drive(img_path, os.path.basename(img_path), session_id)
-                charts[key] = url
-                logger.info(f"📈 Uploaded chart {key} -> {url}")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to upload chart {key}: {e}")
+def extract_insights(downloaded_files):
+    """
+    Parses GAP Excel files to extract insights: obsolete, recommendations, tier_counts.
+    """
+    hw, sw = {"obsolete": [], "recommendations": [], "tier_counts": {}}, {"obsolete": [], "recommendations": [], "tier_counts": {}}
+    for f in downloaded_files:
+        name = f["file_name"].lower()
+        path = f["local_path"]
+        if not name.endswith(".xlsx"): continue
+        df = pd.read_excel(path)
+        obsolete = df[df['Lifecycle Status'].str.lower()=='obsolete']['Device Type'].tolist() if 'Lifecycle Status' in df else []
+        recs = df['Recommendation'].dropna().astype(str).tolist() if 'Recommendation' in df else []
+        tiers = df['Tier'].value_counts().to_dict() if 'Tier' in df else {}
+        insights = {"obsolete": obsolete, "recommendations": recs, "tier_counts": tiers}
+        if 'hw' in name:
+            hw = insights
+        elif 'sw' in name:
+            sw = insights
+    return hw, sw
 
-        # 6. Build payload
-        report_payload = {
-            "session_id": session_id,
-            "folder_id": folder_id,
-            "email": email,
-            "content": content,
-            "charts": charts,
-            "next_action_webhook": next_webhook
+
+def build_narratives(hw_insights, sw_insights):
+    """
+    Constructs narrative sections based on insights.
+    """
+    overview = (
+        f"This analysis covers {sum(hw_insights['tier_counts'].values())} hardware assets"
+        f" and {sum(sw_insights['tier_counts'].values())} software assets."
+    )
+    hw_summary = (
+        f"Hardware obsolete platforms: {', '.join(hw_insights['obsolete']) or 'None'}."
+        f" Recommendations: {'; '.join(hw_insights['recommendations']) or 'None'}."
+    )
+    sw_summary = (
+        f"Software obsolete platforms: {', '.join(sw_insights['obsolete']) or 'None'}."
+        f" Recommendations: {'; '.join(sw_insights['recommendations']) or 'None'}."
+    )
+    return overview, hw_summary, sw_summary
+
+
+def generate_charts(hw_insights, sw_insights, session_id, local_path):
+    """
+    Creates bar charts for tier distributions and returns local paths.
+    """
+    charts = {}
+    for label, insights in [('hardware', hw_insights), ('software', sw_insights)]:
+        data = insights.get('tier_counts', {})
+        if not data: continue
+        plt.figure()
+        plt.bar(list(data.keys()), list(data.values()))
+        plt.title(f"{label.title()} Tier Distribution")
+        plt.tight_layout()
+        filename = os.path.join(local_path, f"{session_id}_{label}_tier_dist.png")
+        plt.savefig(filename)
+        plt.close()
+        charts[label + '_tier_chart'] = filename
+    return charts
+
+
+def process_market_gap(session_id, email, files, local_path, folder_id=None):
+    """
+    Main entry: download files, extract insights, build narratives and charts,
+    and send payload to Market Reports API.
+    """
+    try:
+        # 1. Download
+        downloaded = download_files(files, local_path)
+
+        # 2. Extract insights
+        hw_insights, sw_insights = extract_insights(downloaded)
+
+        # 3. Narratives
+        overview, hw_summary, sw_summary = build_narratives(hw_insights, sw_insights)
+
+        # 4. Charts
+        chart_paths = generate_charts(hw_insights, sw_insights, session_id, local_path)
+        chart_urls = {
+            key: upload_to_drive(path, session_id, folder_id)
+            for key, path in chart_paths.items()
         }
 
-        # Debug: log full payload
-        logger.info("🔍 Built report_payload:\n%s", json.dumps(report_payload, indent=2))
-        # Optionally save to a debug file
-        debug_file = os.path.join(local_path, "debug_report_payload.json")
-        with open(debug_file, "w") as df:
-            json.dump(report_payload, df, indent=2)
-        logger.info(f"🔍 Debug payload written to {debug_file}")
+        # 5. Assemble payload
+        payload = {
+            "session_id": session_id,
+            "email": email,
+            "folder_id": folder_id,
+            "content": {
+                "overview": overview,
+                "hardware_summary": hw_summary,
+                "software_summary": sw_summary
+            },
+            "charts": chart_urls,
+            "input_files": [{"file_name": f["file_name"]} for f in downloaded]
+        }
 
-        # 7. Trigger report generation
-        logger.info(f"🚀 Sending payload to Market Reports API at {REPORT_API_URL}")
-        try:
-            resp = requests.post(REPORT_API_URL, json=report_payload, timeout=60)
-            resp.raise_for_status()
-            logger.info("✅ Report API triggered successfully")
-        except requests.HTTPError as http_err:
-            logger.error(f"🔥 Report API error {http_err.response.status_code}: {http_err.response.text}")
-        except Exception as err:
-            logger.error(f"🔥 Failed to call Report API: {err}")
+        # 6. Call Reports API
+        REPORTS_URL = os.getenv("MARKET_REPORTS_API_URL", "https://market-reports-api.onrender.com")
+        resp = requests.post(f"{REPORTS_URL}/generate_market_reports", json=payload, timeout=120)
+        resp.raise_for_status()
+        print(f"✅ Market reports triggered for {session_id}")
 
     except Exception as e:
-        logger.error(f"🔥 Market Gap analysis failed: {e}")
+        print(f"🔥 Market GAP processing failed: {e}")
         traceback.print_exc()
-
-# ---------------------- Flask Routes ----------------------
-@app.route("/start_market_gap", methods=["POST"])
-def start_market_gap():
-    data = request.get_json(force=True)
-    logger.info(f"📦 Incoming payload to /start_market_gap: {data}")
-    session_id = data.get("session_id")
-    folder_id = data.get("folder_id")
-    next_webhook = data.get("next_action_webhook")
-    email = data.get("email", "")
-
-    missing = [k for k in ("session_id", "folder_id") if not data.get(k)]
-    if missing:
-        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
-
-    # Run processing asynchronously
-    threading.Thread(
-        target=ingest_and_analyze,
-        args=(session_id, folder_id, next_webhook, email),
-        daemon=True
-    ).start()
-    return jsonify({"message": "Market Gap analysis started"}), 200
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    logger.info(f"🚦 Starting Market Gap Analysis service on port {port}")
-    app.run(host="0.0.0.0", port=port)
