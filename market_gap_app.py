@@ -2,18 +2,11 @@ import os
 import json
 import logging
 import threading
-import requests
+import re
 from flask import Flask, request, jsonify
-from market_gap_process import generate_market_reports
-from drive_utils import upload_to_drive, list_files_in_folder
+from market_gap_process import process_market_gap
 
 app = Flask(__name__)
-
-@app.route("/healthz", methods=["GET"])
-def health_check():
-    """Simple keep-alive endpoint."""
-    return "OK", 200
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BASE_DIR = "temp_sessions"
@@ -21,7 +14,7 @@ os.makedirs(BASE_DIR, exist_ok=True)
 
 @app.route("/", methods=["GET"])
 def health():
-    return "✅ Market Gap Analysis API is live", 200
+    return "✅ Market GAP Analysis API is live", 200
 
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
@@ -29,63 +22,56 @@ def start_market_gap():
         data = request.get_json(force=True)
         session_id = data.get("session_id")
         email = data.get("email", "")
-        folder_id = data.get("folder_id")
-        next_webhook = data.get("next_action_webhook")
+        folder_id = data.get("folder_id")  # Reuse existing Drive temp folder
 
-        logging.info("📦 Incoming payload for market gap analysis:\n%s", json.dumps(data, indent=2))
+        logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
-        # Initial ingestion trigger if no content/charts
-        if not data.get("content") and not data.get("charts"):
-            files = list_files_in_folder(folder_id)
-            file_entries = []
-            for f in files:
-                file_entries.append({
-                    "file_name": f.get("name"),
-                    "file_url": f.get("webViewLink") or f.get("webContentLink") or f.get("id")
+        # Validate required fields
+        if not session_id or not email:
+            logging.error("❌ Missing session_id or email")
+            return jsonify({"error": "Missing session_id or email"}), 400
+
+        # Dynamically collect all *_drive_url entries
+        files = []
+        pattern = re.compile(r"^file_(\d+)_drive_url$")
+        for key, url in data.items():
+            match = pattern.match(key)
+            if match and url:
+                files.append({
+                    "file_url":  url,
+                    "file_name": os.path.basename(url),
+                    "type":      key
                 })
-            payload = {
-                "session_id": session_id,
-                "folder_id": folder_id,
-                "files": file_entries,
-                "next_action_webhook": next_webhook
-            }
-            try:
-                resp = requests.post(next_webhook, json=payload)
-                resp.raise_for_status()
-                logging.info("➡️ Triggered ingestion, status %s", resp.status_code)
-            except Exception:
-                logging.exception("🔥 Error triggering ingestion")
-            return jsonify({"message": "Ingestion triggered"}), 200
 
-        # Report generation from GPT3 output
-        missing = []
-        if not session_id:
-            missing.append("session_id")
-        if not data.get("content"):
-            missing.append("content")
-        if not data.get("charts"):
-            missing.append("charts")
-        if missing:
-            return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+        if not files:
+            logging.error("❌ No file URLs provided")
+            return jsonify({"error": "No file URLs provided"}), 400
 
+        # Sort by index to preserve order
+        files.sort(key=lambda f: int(pattern.match(f["type"]).group(1)))
+
+        # Prepare local session folder
         folder_name = session_id if session_id.startswith("Temp_") else f"Temp_{session_id}"
-        local_path = os.path.join(BASE_DIR, folder_name)
-        os.makedirs(local_path, exist_ok=True)
+        folder_path = os.path.join(BASE_DIR, folder_name)
+        os.makedirs(folder_path, exist_ok=True)
 
+        # Start background processing
         def runner():
             try:
-                generate_market_reports(session_id, email, folder_id, data, local_path)
+                process_market_gap(session_id, email, files, folder_path, folder_id)
             except Exception:
-                logging.exception("🔥 Error generating market reports")
+                logging.exception("🔥 Error in Market GAP processing thread")
 
         threading.Thread(target=runner, daemon=True).start()
-        return jsonify({"message": "Market gap report generation started"}), 200
+        logging.info(f"🚀 Started Market GAP processing for {session_id} with {len(files)} files")
+
+        return jsonify({"message": f"Market GAP analysis started with {len(files)} files"}), 200
 
     except Exception:
-        logging.exception("🔥 Failed to initiate generation")
+        logging.exception("🔥 Failed to initiate Market GAP analysis")
         return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    logging.info(f"🚦 Starting Market Gap Analysis API on port {port}")
+    logging.info(f"🚦 Starting Market GAP API on port {port}")
     app.run(host="0.0.0.0", port=port)
