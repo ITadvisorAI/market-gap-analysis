@@ -7,6 +7,12 @@ from flask import Flask, request, jsonify
 from market_gap_process import process_market_gap
 
 app = Flask(__name__)
+
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    """Simple keep-alive endpoint."""
+    return "OK", 200
+    
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BASE_DIR = "temp_sessions"
@@ -27,9 +33,9 @@ def start_market_gap():
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
         # Validate required fields
-        if not session_id or not email:
-            logging.error("❌ Missing session_id or email")
-            return jsonify({"error": "Missing session_id or email"}), 400
+        if not session_id:
+            logging.error("❌ Missing session_id")
+            return jsonify({"error": "Missing session_id"}), 400
 
         # Dynamically collect all *_drive_url entries
         files = []
