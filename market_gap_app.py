@@ -28,13 +28,17 @@ def start_market_gap():
         data = request.get_json(force=True)
         session_id = data.get("session_id")
         email = data.get("email", "")
-        folder_id = data.get("folder_id")  # Optional Drive folder ID
+        folder_id = data.get("folder_id")  # Required Drive folder ID where GPT1/GPT2 uploaded files
 
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
+        # Validate required fields
         if not session_id:
             logging.error("❌ Missing session_id")
             return jsonify({"error": "Missing session_id"}), 400
+        if not folder_id:
+            logging.error("❌ Missing folder_id")
+            return jsonify({"error": "Missing folder_id"}), 400
 
         # Collect file drive URLs
         files = []
@@ -53,7 +57,7 @@ def start_market_gap():
             logging.error("❌ No file URLs provided")
             return jsonify({"error": "No files provided"}), 400
 
-        # Sort by file index
+        # Sort files by index
         files.sort(key=lambda f: int(f["file_name"].split("_")[1]))
 
         # Prepare local session folder for staging
@@ -69,7 +73,7 @@ def start_market_gap():
                 logging.exception("🔥 Error in Market GAP processing thread")
 
         threading.Thread(target=runner, daemon=True).start()
-        logging.info(f"🚀 Started Market GAP processing for {session_id} with {len(files)} files")
+        logging.info(f"🚀 Started Market GAP processing for {session_id} with {len(files)} files, uploading to Drive folder ID: {folder_id}")
 
         return jsonify({"message": f"Market GAP analysis started for {session_id}"}), 202
 
@@ -81,4 +85,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logging.info(f"🚦 Starting Market GAP API on port {port}")
     app.run(host="0.0.0.0", port=port)
-```
