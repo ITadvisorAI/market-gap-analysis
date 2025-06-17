@@ -7,6 +7,12 @@ from flask import Flask, request, jsonify
 from market_gap_process import process_market_gap
 
 app = Flask(__name__)
+
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    """Simple keep-alive endpoint."""
+    return "OK", 200
+    
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BASE_DIR = "temp_sessions"
