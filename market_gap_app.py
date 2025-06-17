@@ -10,7 +10,6 @@ app = Flask(__name__)
 
 @app.route("/healthz", methods=["GET"])
 def health_check():
-    """Simple keep-alive endpoint."""
     return "OK", 200
 
 @app.route("/", methods=["GET"])
@@ -19,7 +18,7 @@ def health():
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# Directory to stage files and outputs
+# Directory for staging
 BASE_DIR = "temp_sessions"
 os.makedirs(BASE_DIR, exist_ok=True)
 
@@ -29,24 +28,22 @@ def start_market_gap():
         data = request.get_json(force=True)
         session_id = data.get("session_id")
         email = data.get("email", "")
-        folder_id = data.get("folder_id")  # Existing temp Drive folder
+        folder_id = data.get("folder_id")  # Optional Drive folder ID
 
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
-        # Validate required fields
-        if not session_id or not folder_id:
-            logging.error("❌ Missing session_id or folder_id")
-            return jsonify({"error": "Missing session_id or folder_id"}), 400
+        if not session_id:
+            logging.error("❌ Missing session_id")
+            return jsonify({"error": "Missing session_id"}), 400
 
-        # Collect Drive URLs and filenames
+        # Collect file drive URLs
         files = []
         pattern = re.compile(r"^file_(\d+)_drive_url$")
         for key, url in data.items():
             match = pattern.match(key)
             if match and url:
                 idx = match.group(1)
-                name_key = f"file_{idx}_name"
-                file_name = data.get(name_key, f"file_{idx}")
+                file_name = f"file_{idx}"
                 files.append({
                     "file_name": file_name,
                     "drive_url": url
@@ -56,11 +53,10 @@ def start_market_gap():
             logging.error("❌ No file URLs provided")
             return jsonify({"error": "No files provided"}), 400
 
-        # Sort files by their index to preserve order
-        files.sort(key=lambda f: int(re.search(r"file_(\d+)", f["file_name"]).group(1))
-                   if re.search(r"file_(\d+)", f["file_name"]) else 0)
+        # Sort by file index
+        files.sort(key=lambda f: int(f["file_name"].split("_")[1]))
 
-        # Prepare local session folder for staging downloads, charts, and reports
+        # Prepare local session folder for staging
         folder_name = session_id if session_id.startswith("Temp_") else f"Temp_{session_id}"
         folder_path = os.path.join(BASE_DIR, folder_name)
         os.makedirs(folder_path, exist_ok=True)
@@ -85,3 +81,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logging.info(f"🚦 Starting Market GAP API on port {port}")
     app.run(host="0.0.0.0", port=port)
+```
