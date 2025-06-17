@@ -12,15 +12,16 @@ app = Flask(__name__)
 def health_check():
     """Simple keep-alive endpoint."""
     return "OK", 200
-    
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
-BASE_DIR = "temp_sessions"
-os.makedirs(BASE_DIR, exist_ok=True)
 
 @app.route("/", methods=["GET"])
 def health():
     return "✅ Market GAP Analysis API is live", 200
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# Directory to stage files and outputs
+BASE_DIR = "temp_sessions"
+os.makedirs(BASE_DIR, exist_ok=True)
 
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
@@ -28,40 +29,43 @@ def start_market_gap():
         data = request.get_json(force=True)
         session_id = data.get("session_id")
         email = data.get("email", "")
-        folder_id = data.get("folder_id")  # Reuse existing Drive temp folder
+        folder_id = data.get("folder_id")  # Existing temp Drive folder
 
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
         # Validate required fields
-        if not session_id:
-            logging.error("❌ Missing session_id")
-            return jsonify({"error": "Missing session_id"}), 400
+        if not session_id or not folder_id:
+            logging.error("❌ Missing session_id or folder_id")
+            return jsonify({"error": "Missing session_id or folder_id"}), 400
 
-        # Dynamically collect all *_drive_url entries
+        # Collect Drive URLs and filenames
         files = []
         pattern = re.compile(r"^file_(\d+)_drive_url$")
         for key, url in data.items():
             match = pattern.match(key)
             if match and url:
+                idx = match.group(1)
+                name_key = f"file_{idx}_name"
+                file_name = data.get(name_key, f"file_{idx}")
                 files.append({
-                    "file_url":  url,
-                    "file_name": os.path.basename(url),
-                    "type":      key
+                    "file_name": file_name,
+                    "drive_url": url
                 })
 
         if not files:
             logging.error("❌ No file URLs provided")
-            return jsonify({"error": "No file URLs provided"}), 400
+            return jsonify({"error": "No files provided"}), 400
 
-        # Sort by index to preserve order
-        files.sort(key=lambda f: int(pattern.match(f["type"]).group(1)))
+        # Sort files by their index to preserve order
+        files.sort(key=lambda f: int(re.search(r"file_(\d+)", f["file_name"]).group(1))
+                   if re.search(r"file_(\d+)", f["file_name"]) else 0)
 
-        # Prepare local session folder
+        # Prepare local session folder for staging downloads, charts, and reports
         folder_name = session_id if session_id.startswith("Temp_") else f"Temp_{session_id}"
         folder_path = os.path.join(BASE_DIR, folder_name)
         os.makedirs(folder_path, exist_ok=True)
 
-        # Start background processing
+        # Launch background processing thread
         def runner():
             try:
                 process_market_gap(session_id, email, files, folder_path, folder_id)
@@ -71,7 +75,7 @@ def start_market_gap():
         threading.Thread(target=runner, daemon=True).start()
         logging.info(f"🚀 Started Market GAP processing for {session_id} with {len(files)} files")
 
-        return jsonify({"message": f"Market GAP analysis started with {len(files)} files"}), 200
+        return jsonify({"message": f"Market GAP analysis started for {session_id}"}), 202
 
     except Exception:
         logging.exception("🔥 Failed to initiate Market GAP analysis")
