@@ -13,51 +13,29 @@ creds = service_account.Credentials.from_service_account_file(
 )
 drive_service = build('drive', 'v3', credentials=creds)
 
-def upload_to_drive(file_path: str, file_name: str, session_folder_name: str) -> str:
+def upload_to_drive(file_path: str, drive_folder_id: str) -> str:
     """
-    Uploads a file to a Google Drive folder named session_folder_name,
+    Uploads a local file into the Google Drive folder with the given ID,
     makes it publicly readable, and returns its webViewLink.
     """
-    # Find the session folder by name
-    folder_query = (
-        f"name='{session_folder_name}' and "
-        "mimeType='application/vnd.google-apps.folder' and trashed=false"
-    )
-    response = drive_service.files().list(
-        q=folder_query,
-        fields="files(id)"
-    ).execute()
-    folders = response.get("files", [])
-    if not folders:
-        raise FileNotFoundError(f"Drive folder '{session_folder_name}' not found")
-    folder_id = folders[0]["id"]
-
-    # Determine MIME type
-    ext = os.path.splitext(file_name)[1].lower()
-    mime_types = {
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    file_name = os.path.basename(file_path)
+    media = MediaFileUpload(file_path)
+    metadata = {
+        "name": file_name,
+        "parents": [drive_folder_id]
     }
-    mime = mime_types.get(ext, "application/octet-stream")
-
-    # Upload the file
-    media = MediaFileUpload(file_path, mimetype=mime)
-    file_metadata = {"name": file_name, "parents": [folder_id]}
     uploaded = drive_service.files().create(
-        body=file_metadata,
+        body=metadata,
         media_body=media,
         fields="id, webViewLink"
     ).execute()
-
-    # Make the file publicly readable
+    # Grant read access to anyone
     drive_service.permissions().create(
         fileId=uploaded["id"],
         body={"type": "anyone", "role": "reader"},
         fields="id"
     ).execute()
-
-    return uploaded.get("webViewLink")
+    return uploaded["webViewLink"]
 
 def list_files_in_folder(session_folder_name: str) -> list[dict]:
     """
