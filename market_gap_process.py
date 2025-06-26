@@ -120,8 +120,20 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
         overview, hw_summary, sw_summary = build_narratives(hw_insights, sw_insights)
 
         # 5. Generate and upload charts
-        chart_paths = generate_visual_charts(hw_insights, sw_insights)
-        chart_urls = {k: upload_to_drive(p, session_id, folder_id) for k, p in chart_paths.items()}
+        # — wrap your insights into the dict that visualization.py expects
+        data_frames = {
+            'hardware_insights': hw_insights,
+            'software_insights': sw_insights
+        }
+        # — choose a local folder for chart outputs (e.g. under the session's temp dir)
+        chart_output_dir = os.path.join(local_path, 'market_gap_charts')
+        # — now call with (dict, str)
+        chart_paths = generate_visual_charts(data_frames, chart_output_dir)
+        # — upload each generated chart into the same Drive folder
+        chart_urls = {
+            key: upload_to_drive(path, session_id, folder_id)
+            for key, path in chart_paths.items()
+        }
 
         # 6. Assemble payload matching latest templates
         payload = {
