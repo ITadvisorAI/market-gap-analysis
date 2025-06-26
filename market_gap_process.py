@@ -144,7 +144,7 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
 
         # 5e) Upload each chart into your Drive temp folder
         chart_urls = {
-            key: upload_to_drive(path, session_id, folder_id)
+            key: upload_to_drive(path, folder_id)
             for key, path in chart_paths.items()
         }
 
