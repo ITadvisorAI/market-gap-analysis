@@ -120,7 +120,7 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
         overview, hw_summary, sw_summary = build_narratives(hw_insights, sw_insights)
 
         # 5. Generate and upload charts
-        chart_paths = generate_visual_charts(hw_insights, sw_insights, session_id, local_path)
+        chart_paths = generate_visual_charts(hw_insights, sw_insights)
         chart_urls = {k: upload_to_drive(p, session_id, folder_id) for k, p in chart_paths.items()}
 
         # 6. Assemble payload matching latest templates
