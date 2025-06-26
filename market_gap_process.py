@@ -120,16 +120,29 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
         overview, hw_summary, sw_summary = build_narratives(hw_insights, sw_insights)
 
         # 5. Generate and upload charts
-        # — wrap your insights into the dict that visualization.py expects
+        # 5a) Turn your insights dicts into DataFrames
+        hw_df = pd.DataFrame(
+            list(hw_insights.get('tier_counts', {}).items()),
+            columns=['Tier', 'Count']
+        )
+        sw_df = pd.DataFrame(
+            list(sw_insights.get('tier_counts', {}).items()),
+            columns=['Tier', 'Count']
+        )
+
+        # 5b) Package into the dict that visualization.py expects
         data_frames = {
-            'hardware_insights': hw_insights,
-            'software_insights': sw_insights
+            'hardware_insights': hw_df,
+            'software_insights': sw_df
         }
-        # — choose a local folder for chart outputs (e.g. under the session's temp dir)
+
+        # 5c) Define a real local folder for chart PNGs
         chart_output_dir = os.path.join(local_path, 'market_gap_charts')
-        # — now call with (dict, str)
+
+        # 5d) Generate charts into that folder
         chart_paths = generate_visual_charts(data_frames, chart_output_dir)
-        # — upload each generated chart into the same Drive folder
+
+        # 5e) Upload each chart into your Drive temp folder
         chart_urls = {
             key: upload_to_drive(path, session_id, folder_id)
             for key, path in chart_paths.items()
