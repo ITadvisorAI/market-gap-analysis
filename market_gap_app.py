@@ -46,9 +46,6 @@ def start_market_gap():
             logging.error("❌ No files provided")
             return jsonify({"error": "No files provided"}), 400
 
-        # Sort files by index
-        files.sort(key=lambda f: int(f["file_name"].split("_")[1]))
-
         # Prepare local session folder for staging
         folder_name = session_id if session_id.startswith("Temp_") else f"Temp_{session_id}"
         folder_path = os.path.join(BASE_DIR, folder_name)
