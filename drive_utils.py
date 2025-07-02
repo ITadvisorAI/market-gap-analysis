@@ -2,6 +2,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 import os
+import requests
 
 # Path to your service account JSON key
 SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
@@ -63,3 +64,15 @@ def list_files_in_folder(session_folder_name: str) -> list[dict]:
         fields="files(id, name, webViewLink, webContentLink)"
     ).execute()
     return response.get("files", [])
+    
+def download_file(url: str, dest_path: str):
+    """
+    Download a file from a public URL and save it locally.
+    """
+    resp = requests.get(url, stream=True)
+    resp.raise_for_status()
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    with open(dest_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
