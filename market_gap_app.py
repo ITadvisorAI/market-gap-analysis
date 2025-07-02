@@ -26,12 +26,12 @@ os.makedirs(BASE_DIR, exist_ok=True)
 def start_market_gap():
     try:
         data = request.get_json()
-        # support incoming `files: [{file_name, drive_url}]`
-        file_entries = data.get("files") or []
-        file_urls = [f["drive_url"] for f in file_entries if f.get("drive_url")]
-        session_id = data.get("session_id")
-        email = data.get("email", "")
-        folder_id = data.get("folder_id")  # Required Drive folder ID where GPT1/GPT2 uploaded files
+        # incoming files array and charts
+        files       = data.get("files")   or []
+        charts      = data.get("charts")  or {}
+        session_id  = data.get("session_id")
+        email       = data.get("email", "")
+        folder_id   = data.get("folder_id")
 
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
@@ -42,25 +42,8 @@ def start_market_gap():
         if not folder_id:
             logging.error("❌ Missing folder_id")
             return jsonify({"error": "Missing folder_id"}), 400
-        if not file_urls:
-        app.logger.error("❌ No drive_url entries found in 'files'")
-        return jsonify({"error": "No file URLs provided"}), 400
-
-        # Collect file drive URLs
-        files = []
-        pattern = re.compile(r"^file_(\d+)_drive_url$")
-        for key, url in data.items():
-            match = pattern.match(key)
-            if match and url:
-                idx = match.group(1)
-                file_name = f"file_{idx}"
-                files.append({
-                    "file_name": file_name,
-                    "drive_url": url
-                })
-
         if not files:
-            logging.error("❌ No file URLs provided")
+            logging.error("❌ No files provided")
             return jsonify({"error": "No files provided"}), 400
 
         # Sort files by index
