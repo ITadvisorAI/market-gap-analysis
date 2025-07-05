@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import requests
 import openai
+from openai.error import RateLimitError, NotFoundError
 import traceback
 from datetime import date
 from visualization import generate_visual_charts
@@ -102,33 +103,63 @@ def build_section_5_market_benchmarking(hw_df, sw_df):
 # AI narrative generator
 
 def ai_narrative(section_name: str, summary: dict) -> str:
-    print(f"[DEBUG] Generating narrative for {section_name}…", flush=True)
+    print(f"[DEBUG] ai_narrative called for section {section_name} with summary keys: {list(summary.keys())}", flush=True)
+    # chunk large lists to avoid rate limits
+    list_items = [(k, v) for k, v in summary.items() if isinstance(v, list)]
+    if list_items:
+        largest_key, largest_list = max(list_items, key=lambda x: len(x[1]))
+        total = len(largest_list)
+        chunk_size = 20
+        narratives = []
+        for i in range(0, total, chunk_size):
+            sublist = largest_list[i:i+chunk_size]
+            chunked_summary = dict(summary)
+            chunked_summary[largest_key] = sublist
+            label = f" (chunk {i//chunk_size+1})" if total > chunk_size else ""
+            user_content = f"Section: {section_name}{label}\nData: {json.dumps(chunked_summary)}"
+            messages = [
+                {"role": "system", "content": (
+                    "You are an expert IT transformation analyst. "
+                    "Using the data provided, write a concise, insightful narrative for the given section."
+                )},
+                {"role": "user", "content": user_content}
+            ]
+            try:
+                resp = openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    temperature=0.3
+                )
+            except (RateLimitError, NotFoundError):
+                resp = openai.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    temperature=0.3
+                )
+            narratives.append(resp.choices[0].message.content.strip())
+        return "\n\n".join(narratives)
+
+    # small summary
     user_content = f"Section: {section_name}\nData: {json.dumps(summary)}"
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an expert IT transformation analyst. "
-                "Using the data provided, write a concise, insightful narrative for the given section."
-            )
-        },
+        {"role": "system", "content": (
+            "You are an expert IT transformation analyst. "
+            "Using the data provided, write a concise, insightful narrative for the given section."
+        )},
         {"role": "user", "content": user_content}
     ]
-    # Use new OpenAI Python v1.0.0+ interface
     try:
         resp = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             temperature=0.3
         )
-    except Exception:
-        # Fallback to GPT-3.5 if GPT-4 is unavailable
+    except (RateLimitError, NotFoundError):
         resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.3
         )
-    # The completion content is nested under choices[0].message.content
     return resp.choices[0].message.content.strip()
 
 # Main processing function
