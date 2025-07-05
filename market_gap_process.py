@@ -3,7 +3,6 @@ import json
 import pandas as pd
 import requests
 import openai
-from openai.error import RateLimitError, NotFoundError
 import traceback
 from datetime import date
 from visualization import generate_visual_charts
@@ -103,44 +102,12 @@ def build_section_5_market_benchmarking(hw_df, sw_df):
 # AI narrative generator
 
 def ai_narrative(section_name: str, summary: dict) -> str:
-    print(f"[DEBUG] ai_narrative called for section {section_name} with summary keys: {list(summary.keys())}", flush=True)
-    # chunk large lists to avoid rate limits
-    list_items = [(k, v) for k, v in summary.items() if isinstance(v, list)]
-    if list_items:
-        largest_key, largest_list = max(list_items, key=lambda x: len(x[1]))
-        total = len(largest_list)
-        chunk_size = 20
-        narratives = []
-        for i in range(0, total, chunk_size):
-            sublist = largest_list[i:i+chunk_size]
-            chunked_summary = dict(summary)
-            chunked_summary[largest_key] = sublist
-            label = f" (chunk {i//chunk_size+1})" if total > chunk_size else ""
-            user_content = f"Section: {section_name}{label}\nData: {json.dumps(chunked_summary)}"
-            messages = [
-                {"role": "system", "content": (
-                    "You are an expert IT transformation analyst. "
-                    "Using the data provided, write a concise, insightful narrative for the given section."
-                )},
-                {"role": "user", "content": user_content}
-            ]
-            try:
-                resp = openai.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    temperature=0.3
-                )
-            except (RateLimitError, NotFoundError):
-                resp = openai.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=messages,
-                    temperature=0.3
-                )
-            narratives.append(resp.choices[0].message.content.strip())
-        return "\n\n".join(narratives)
+    print(f"[DEBUG] ai_narrative for {section_name}", flush=True)
+    raw = json.dumps(summary)
+    if len(raw) > 10000:
+        raw = raw[:10000] + '... (truncated)'
+    user_content = f"Section: {section_name}\nData: {raw}"
 
-    # small summary
-    user_content = f"Section: {section_name}\nData: {json.dumps(summary)}"
     messages = [
         {"role": "system", "content": (
             "You are an expert IT transformation analyst. "
@@ -148,17 +115,20 @@ def ai_narrative(section_name: str, summary: dict) -> str:
         )},
         {"role": "user", "content": user_content}
     ]
+
     try:
         resp = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=500
         )
-    except (RateLimitError, NotFoundError):
+    except openai.RateLimitError:
         resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=300
         )
     return resp.choices[0].message.content.strip()
 
@@ -202,16 +172,9 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
         chart_dir = os.path.join(local_path, 'market_gap_charts')
         os.makedirs(chart_dir, exist_ok=True)
         chart_paths = generate_visual_charts(data_frames, chart_dir)
-        chart_ids = {
-            k: upload_to_drive(path, folder_id)
-            for k, path in chart_paths.items()
-        }
+        chart_ids = {k: upload_to_drive(path, folder_id) for k, path in chart_paths.items()}
 
-        # Convert chart IDs to view URLs
-        chart_urls = {
-            k: f"https://drive.google.com/file/d/{fid}/view?usp=drivesdk"
-            for k, fid in chart_ids.items()
-        }
+        chart_urls = {k: f"https://drive.google.com/file/d/{fid}/view?usp=drivesdk" for k, fid in chart_ids.items()}
 
         # 4. Build section summaries
         summaries = {
@@ -222,13 +185,9 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
             'market_benchmarking': build_section_5_market_benchmarking(hw_df, sw_df)
         }
 
-        # 5. Use OpenAI to generate narratives
-        sections = {
-            key: ai_narrative(key, summaries[key])
-            for key in summaries
-        }
+        # 5. Generate narratives via OpenAI\        sections = {k: ai_narrative(k, summaries[k]) for k in summaries}
 
-        # 6. Assemble payload for report generator
+        # 6. Assemble payload
         payload = {
             'session_id': session_id,
             'date': date.today().isoformat(),
@@ -237,10 +196,7 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
             'charts': chart_urls,
             'appendices': [lf['file_name'] for lf in local_files]
         }
-        print(
-            f"[DEBUG] Calling report generator with payload keys: {list(payload.keys())}",
-            flush=True
-        )
+        print(f"[DEBUG] Calling report generator with payload keys: {list(payload.keys())}", flush=True)
 
         # 7. Call report generator service
         resp = requests.post(
@@ -250,10 +206,6 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
         )
         resp.raise_for_status()
         result = resp.json()
-        print(
-            f"✅ Report generator invoked for session {session_id}",
-            flush=True
-        )
 
         # 8. Download & upload final reports
         for url in result.get('report_urls', []):
