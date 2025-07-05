@@ -185,7 +185,8 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
             'market_benchmarking': build_section_5_market_benchmarking(hw_df, sw_df)
         }
 
-        # 5. Generate narratives via OpenAI\        sections = {k: ai_narrative(k, summaries[k]) for k in summaries}
+        # 5. Generate narratives via OpenAI
+        sections = {k: ai_narrative(k, summaries[k]) for k in summaries}
 
         # 6. Assemble payload
         payload = {
