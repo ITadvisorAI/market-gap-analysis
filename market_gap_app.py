@@ -2,7 +2,6 @@ import os
 import json
 import logging
 import threading
-import re
 from flask import Flask, request, jsonify
 from market_gap_process import process_market_gap
 
@@ -25,33 +24,34 @@ os.makedirs(BASE_DIR, exist_ok=True)
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
     try:
-       # try to parse JSON first (e.g. from tests)
+        # try to parse JSON first (e.g. from tests)
         if request.is_json:
             data = request.get_json()
         else:
-        # fall back to multipart/form-data (file uploads from Postman)
+            # fall back to multipart/form-data (file uploads from Postman)
             data = {
-            'session_id': request.form['session_id'],
-            'email': request.form.get('email', ''),
-            'folder_id': request.form['folder_id'],
-            'files': []
-        }
-        # save each uploaded file locally and record its path
-        tmp_dir = os.path.join('/tmp', data['session_id'])
-        os.makedirs(tmp_dir, exist_ok=True)
-        for f in request.files.getlist('files'):
-            dest_path = os.path.join(tmp_dir, f.filename)
-            f.save(dest_path)
-            data['files'].append({
-                'file_name': f.filename,
-                'local_path': dest_path
-        })
+                'session_id': request.form['session_id'],
+                'email': request.form.get('email', ''),
+                'folder_id': request.form['folder_id'],
+                'files': []
+            }
+            # save each uploaded file locally and record its path
+            tmp_dir = os.path.join('/tmp', data['session_id'])
+            os.makedirs(tmp_dir, exist_ok=True)
+            for f in request.files.getlist('files'):
+                dest_path = os.path.join(tmp_dir, f.filename)
+                f.save(dest_path)
+                data['files'].append({
+                    'file_name': f.filename,
+                    'local_path': dest_path
+                })
+
         # incoming files array and charts
-        files       = data.get("files")   or []
-        charts      = data.get("charts")  or {}
-        session_id  = data.get("session_id")
-        email       = data.get("email", "")
-        folder_id   = data.get("folder_id")
+        files      = data.get('files') or []
+        charts     = data.get('charts') or {}
+        session_id = data.get('session_id')
+        email      = data.get('email', '')
+        folder_id  = data.get('folder_id')
 
         logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
@@ -79,7 +79,9 @@ def start_market_gap():
                 logging.exception("🔥 Error in Market GAP processing thread")
 
         threading.Thread(target=runner, daemon=True).start()
-        logging.info(f"🚀 Started Market GAP processing for {session_id} with {len(files)} files, uploading to Drive folder ID: {folder_id}")
+        logging.info(
+            f"🚀 Started Market GAP processing for {session_id} with {len(files)} files, uploading to Drive folder ID: {folder_id}"
+        )
 
         return jsonify({"message": f"Market GAP analysis started for {session_id}"}), 202
 
