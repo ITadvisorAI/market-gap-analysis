@@ -114,18 +114,21 @@ def ai_narrative(section_name: str, summary: dict) -> str:
         },
         {"role": "user", "content": user_content}
     ]
+    # Use new OpenAI Python v1.0.0+ interface
     try:
-        resp = openai.ChatCompletion.create(
+        resp = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             temperature=0.3
         )
     except Exception:
-        resp = openai.ChatCompletion.create(
+        # Fallback to GPT-3.5 if GPT-4 is unavailable
+        resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.3
         )
+    # The completion content is nested under choices[0].message.content
     return resp.choices[0].message.content.strip()
 
 # Main processing function
@@ -143,7 +146,6 @@ def process_market_gap(session_id, email, files, local_path, folder_id=None):
 
         # 1. Download input files and build DataFrames
         for f in files:
-            # Download as XLSX via Sheets export
             dest = download_sheet_as_xlsx(f['drive_url'], local_path)
             local_files.append({'file_name': f['file_name'], 'local_path': dest})
             name_lower = f['file_name'].lower()
