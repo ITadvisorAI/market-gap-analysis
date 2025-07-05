@@ -25,7 +25,27 @@ os.makedirs(BASE_DIR, exist_ok=True)
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
     try:
+        # try to parse JSON first (e.g. from tests)
+    if request.is_json:
         data = request.get_json()
+    else:
+    # fall back to multipart/form-data (file uploads from Postman)
+    data = {
+        'session_id': request.form['session_id'],
+        'email': request.form.get('email', ''),
+        'folder_id': request.form['folder_id'],
+        'files': []
+    }
+    # save each uploaded file locally and record its path
+    tmp_dir = os.path.join('/tmp', data['session_id'])
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in request.files.getlist('files'):
+        dest_path = os.path.join(tmp_dir, f.filename)
+        f.save(dest_path)
+        data['files'].append({
+            'file_name': f.filename,
+            'local_path': dest_path
+        })
         # incoming files array and charts
         files       = data.get("files")   or []
         charts      = data.get("charts")  or {}
